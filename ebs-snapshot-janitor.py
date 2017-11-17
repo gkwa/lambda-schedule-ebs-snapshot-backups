@@ -1,6 +1,7 @@
 import boto3
 import re
 import datetime
+from datetime import date, timedelta
 
 ec = boto3.client('ec2')
 iam = boto3.client('iam')
@@ -29,14 +30,37 @@ def lambda_handler(event, context):
         account_ids.append(
             re.search(r'(arn:aws:sts::)([0-9]+)', str(e)).groups()[1])
 
-    delete_on = datetime.date.today().strftime('%Y-%m-%d')
-    filters = [
-        {'Name': 'tag:Name', 'Values': ['DeleteOn']},
-        {'Name': 'tag:Value', 'Values': [delete_on]},
-    ]
-    snapshot_response = ec.describe_snapshots(
-        OwnerIds=account_ids, Filters=filters)
+    client = boto3.client('ec2')
+    regions = [region['RegionName']
+               for region in client.describe_regions()['Regions']]
 
-    for snap in snapshot_response['Snapshots']:
-        print("Deleting snapshot %s" % snap['SnapshotId'])
-        ec.delete_snapshot(SnapshotId=snap['SnapshotId'])
+    for r in regions:
+        print("region: %s" % r)
+
+        ec = boto3.client('ec2', region_name=r)
+
+        # delete instances we missed from a week ago
+        for i in range(0, 7):
+            delete_on = (datetime.date.today() +
+                         timedelta(days=-i)).strftime('%Y-%m-%d')
+            filters = [
+                {'Name': 'tag-key', 'Values': ['DeleteOn']},
+                {'Name': 'tag-value', 'Values': [delete_on]},
+            ]
+
+            snapshot_response = ec.describe_snapshots(
+                OwnerIds=account_ids, Filters=filters)
+
+            # print("Account ID %s" % ','.join(account_ids))
+
+            for snap in snapshot_response['Snapshots']:
+                print("Deleting snapshot %s" % snap['SnapshotId'])
+                ec.delete_snapshot(SnapshotId=snap['SnapshotId'])
+
+
+def main():
+    lambda_handler(None, None)
+
+
+if __name__ == '__main__':
+    main()
